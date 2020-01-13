@@ -70,8 +70,10 @@ typedef struct
     gboolean    tooltip_display_percentage;
     gboolean    tooltip_display_time;
     int         low_percentage;
+    int         high_percentage;
     int         critical_percentage;
     int         action_on_low;
+    int         action_on_high;
     int         action_on_critical;
     char       *command_on_low;
     char       *command_on_critical;
@@ -90,6 +92,7 @@ typedef struct
     GtkWidget         *battstatus;
     int                timeoutid; /* To update apm status */
     gboolean           low;
+    gboolean           high;
     gboolean           critical;
     t_battmon_options  options;
     GtkLabel          *label;
@@ -113,8 +116,10 @@ typedef struct
     GtkWidget        *cb_disp_tooltip_time;
     GtkWidget        *cb_disp_icon;
     GtkWidget        *sb_low_percentage;
+    GtkWidget        *sb_high_percentage;
     GtkWidget        *sb_critical_percentage;
     GtkWidget        *co_action_low;
+    GtkWidget        *co_action_high;
     GtkWidget        *co_action_critical;
     GtkWidget        *en_command_low;
     GtkWidget        *en_command_critical;
@@ -127,7 +132,7 @@ typedef struct
 
 enum {BM_DO_NOTHING, BM_MESSAGE, BM_COMMAND, BM_COMMAND_TERM};
 enum {BM_BROKEN, BM_USE_ACPI, BM_USE_APM};
-enum {BM_MISSING, BM_CRITICAL, BM_CRITICAL_CHARGING, BM_LOW, BM_LOW_CHARGING, BM_OK, BM_OK_CHARGING, BM_FULL, BM_FULL_CHARGING};
+enum {BM_MISSING, BM_CRITICAL, BM_CRITICAL_CHARGING, BM_LOW, BM_LOW_CHARGING, BM_HIGH, BM_HIGH_CHARGING, BM_OK, BM_OK_CHARGING, BM_FULL, BM_FULL_CHARGING};
 
 static gboolean battmon_set_size(XfcePanelPlugin *plugin, int size, t_battmon *battmon);
 
@@ -143,8 +148,10 @@ init_options(t_battmon_options *options)
     options->tooltip_display_percentage = FALSE;
     options->tooltip_display_time = FALSE;
     options->low_percentage = 10;
+    options->high_percentage = 80;
     options->critical_percentage = 5;
     options->action_on_low = 1;
+    options->action_on_high = 1;
     options->action_on_critical = 1;
     options->command_on_low = NULL;
     options->command_on_critical = NULL;
@@ -404,6 +411,7 @@ update_apm_status(t_battmon *battmon)
         color = &battmon->options.colorA;
     }
     else {
+    	battmon->high = FALSE;
         if (charge <= battmon->options.critical_percentage) {
             color = &battmon->options.colorC;
         }
@@ -476,6 +484,17 @@ do_low_warn:
                 xfce_spawn_command_line_on_screen(NULL, battmon->options.command_on_low, interm, FALSE, NULL);
             }
         }
+    } else if (acline && charge >= battmon->options.high_percentage && !battmon->high){
+        battmon->high = TRUE;
+        GtkWidget *dialog;
+        if(battmon->options.action_on_low == BM_MESSAGE){
+            dialog = gtk_message_dialog_new (NULL, 0, GTK_MESSAGE_WARNING, GTK_BUTTONS_CLOSE,
+            _("ATTENTION: Your battery is at the \"HIGH\" level. You should consider UN-plugging to keep your battery healthy."));
+            g_signal_connect_swapped (dialog, "response", G_CALLBACK (gtk_widget_destroy), dialog);
+            gtk_widget_show_all (dialog);
+            return TRUE;
+        }
+    
     }
 
     return TRUE;
@@ -625,6 +644,7 @@ battmon_create(XfcePanelPlugin *plugin)
     battmon->plugin = plugin;
 
     battmon->low = FALSE;
+    battmon->high = FALSE;
     battmon->critical = FALSE;
 
     battmon->timeoutid = 0;
@@ -681,9 +701,13 @@ battmon_read_config(XfcePanelPlugin *plugin, t_battmon *battmon)
 
     battmon->options.low_percentage = xfce_rc_read_int_entry (rc, "low_percentage", 10);
 
+    battmon->options.high_percentage = xfce_rc_read_int_entry (rc, "high_percentage", 80);
+
     battmon->options.critical_percentage = xfce_rc_read_int_entry (rc, "critical_percentage", 5);
 
     battmon->options.action_on_low = xfce_rc_read_int_entry (rc, "action_on_low", 0);
+
+    battmon->options.action_on_high = xfce_rc_read_int_entry (rc, "action_on_high", 0);
 
     battmon->options.action_on_critical = xfce_rc_read_int_entry (rc, "action_on_critical", 0);
 
@@ -741,9 +765,13 @@ battmon_write_config(XfcePanelPlugin *plugin, t_battmon *battmon)
 
     xfce_rc_write_int_entry (rc, "low_percentage", battmon->options.low_percentage);
 
+    xfce_rc_write_int_entry (rc, "high_percentage", battmon->options.high_percentage);
+
     xfce_rc_write_int_entry (rc, "critical_percentage", battmon->options.critical_percentage);
 
     xfce_rc_write_int_entry (rc, "action_on_low", battmon->options.action_on_low);
+
+    xfce_rc_write_int_entry (rc, "action_on_high", battmon->options.action_on_high);
 
     xfce_rc_write_int_entry (rc, "action_on_critical", battmon->options.action_on_critical);
 
@@ -810,6 +838,7 @@ refresh_dialog(t_battmon_dialog *dialog)
     t_battmon *battmon = dialog->battmon;
 
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(dialog->sb_low_percentage), battmon->options.low_percentage);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(dialog->sb_high_percentage), battmon->options.high_percentage);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(dialog->sb_critical_percentage), battmon->options.critical_percentage);
     gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(dialog->ac_color_button), &battmon->options.colorA);
     gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(dialog->high_color_button), &battmon->options.colorH);
@@ -822,6 +851,7 @@ refresh_dialog(t_battmon_dialog *dialog)
     else
         gtk_entry_set_text(GTK_ENTRY(dialog->en_command_low), "");
 
+    gtk_combo_box_set_active(GTK_COMBO_BOX(dialog->co_action_high), battmon->options.action_on_high);
     gtk_combo_box_set_active(GTK_COMBO_BOX(dialog->co_action_critical), battmon->options.action_on_critical);
 
     if (battmon->options.command_on_critical)
@@ -931,6 +961,15 @@ set_low_percentage(GtkSpinButton *sb, t_battmon_dialog *dialog)
 }
 
 static void
+set_high_percentage(GtkSpinButton *sb, t_battmon_dialog *dialog)
+{
+    t_battmon *battmon = dialog->battmon;
+
+    battmon->options.high_percentage = gtk_spin_button_get_value_as_int(sb);
+    update_apm_status(dialog->battmon);
+}
+
+static void
 set_critical_percentage(GtkSpinButton *sb, t_battmon_dialog *dialog)
 {
     t_battmon *battmon = dialog->battmon;
@@ -947,6 +986,16 @@ set_action_low(GtkComboBoxText *co, t_battmon_dialog *dialog)
     battmon->options.action_on_low = gtk_combo_box_get_active(GTK_COMBO_BOX(co));
 
     gtk_widget_set_sensitive(dialog->en_command_low, (battmon->options.action_on_low > 1) ? 1 : 0);
+    update_apm_status(dialog->battmon);
+}
+
+static void
+set_action_high(GtkComboBoxText *co, t_battmon_dialog *dialog)
+{
+    t_battmon *battmon = dialog->battmon;
+
+    battmon->options.action_on_high = gtk_combo_box_get_active(GTK_COMBO_BOX(co));
+
     update_apm_status(dialog->battmon);
 }
 
@@ -1208,7 +1257,7 @@ battmon_create_options(XfcePanelPlugin *plugin, t_battmon *battmon)
     /* Create size group to keep widgets aligned */
     sg = gtk_size_group_new(GTK_SIZE_GROUP_HORIZONTAL);
 
-    /* Low and Critical percentage settings */
+    /* Low, High and Critical percentage settings */
     vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_container_set_border_width(GTK_CONTAINER(vbox), 12);
     hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
@@ -1257,6 +1306,34 @@ battmon_create_options(XfcePanelPlugin *plugin, t_battmon *battmon)
 
     button = gtk_button_new_with_label("...");
     gtk_box_pack_start(GTK_BOX(hbox), button, FALSE, FALSE, 0);
+
+    /* High battery percentage setting */
+
+    hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, BORDER);
+    gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, FALSE, 0);
+
+    label = gtk_label_new(_("High percentage:"));
+    gtk_size_group_add_widget(sg, label);
+    gtk_widget_set_valign(label, GTK_ALIGN_CENTER);
+    gtk_box_pack_start(GTK_BOX(hbox), label, FALSE, FALSE, 0);
+
+    dialog->sb_high_percentage = gtk_spin_button_new_with_range(1, 100, 1);
+    gtk_box_pack_start(GTK_BOX(hbox), dialog->sb_high_percentage, FALSE, FALSE, 0);
+
+    /* High battery action settings */
+
+    hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, BORDER);
+    gtk_box_pack_start(GTK_BOX(vbox), hbox, FALSE, FALSE, 0);
+
+    label = gtk_label_new(_("High battery action:"));
+    gtk_size_group_add_widget(sg, label);
+    gtk_widget_set_valign(label, GTK_ALIGN_CENTER);
+    gtk_box_pack_start(GTK_BOX(hbox), label, FALSE, FALSE, 0);
+
+    dialog->co_action_high = gtk_combo_box_text_new();
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(dialog->co_action_high), _("Do nothing"));
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(dialog->co_action_high), _("Display a warning message"));
+    gtk_box_pack_start(GTK_BOX(hbox), dialog->co_action_high, FALSE, FALSE, 0);
 
     hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     gtk_widget_set_margin_top(GTK_WIDGET (hbox), 12);
@@ -1370,8 +1447,10 @@ battmon_create_options(XfcePanelPlugin *plugin, t_battmon *battmon)
     g_signal_connect(dialog->cb_disp_icon, "toggled", G_CALLBACK(set_disp_icon), dialog);
 
     g_signal_connect(dialog->sb_low_percentage, "value-changed", G_CALLBACK(set_low_percentage), dialog);
+    g_signal_connect(dialog->sb_high_percentage, "value-changed", G_CALLBACK(set_high_percentage), dialog);
     g_signal_connect(dialog->sb_critical_percentage, "value-changed", G_CALLBACK(set_critical_percentage), dialog);
     g_signal_connect(dialog->co_action_low, "changed", G_CALLBACK(set_action_low), dialog);
+    g_signal_connect(dialog->co_action_high, "changed", G_CALLBACK(set_action_high), dialog);    
     g_signal_connect(dialog->co_action_critical, "changed", G_CALLBACK(set_action_critical), dialog);
     g_signal_connect(dialog->en_command_low, "focus-out-event", G_CALLBACK(set_command_low), dialog);
     g_signal_connect(dialog->en_command_critical, "focus-out-event", G_CALLBACK(set_command_critical), dialog);
